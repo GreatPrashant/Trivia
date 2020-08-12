@@ -16,7 +16,7 @@ import com.prashant.app.objects.YellowBackground;
 import com.prashant.app.objects.TimeIndicator;
 import com.prashant.app.programs.ColorShaderProgram;
 import com.prashant.app.programs.TextureShaderProgram;
-import com.prashant.app.text.TextObject;
+import com.prashant.app.text.GLText;
 import com.prashant.app.util.Geometry;
 import com.prashant.app.util.Geometry.*;
 import com.prashant.app.util.MatrixHelper;
@@ -34,6 +34,7 @@ import static android.opengl.Matrix.rotateM;
 import static android.opengl.Matrix.scaleM;
 import static android.opengl.Matrix.setIdentityM;
 import static android.opengl.Matrix.setLookAtM;
+import static android.opengl.Matrix.setRotateM;
 import static android.opengl.Matrix.translateM;
 
 public class TriviaRenderer implements GLSurfaceView.Renderer {
@@ -46,23 +47,25 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
     private final float[] invertedViewProjectionMatrix = new float[16];
     private final float[] modelViewProjectionMatrix = new float[16];
     private final float[] rotationMatrix = new float[16];
+    private final float[] mAccumulatedRotation = new float[16];
 
+    private static final float MAX_ROTATION = 46f;
     private TextureShaderProgram textureProgram;
     private ColorShaderProgram colorProgram;
     private YellowBackground yellowBackground;
     private Star star;
+    private GLText glText;
     private ImageButton heading;
     private ImageButton[] imageButton = new ImageButton[4];
     private Panel darkPanel, lightPanel, bottomBar;
     private TimeIndicator scaleBar;
-    private TextObject theTextObj = new TextObject();;
     private boolean mustRebuildText = true;
     private int yBgTexture, starTexture, headingTexture, buttonTexture, wrongButtonTexture, correctButtonTexture;
     private GLSurfaceView glSurfaceView;
     private Point b0Pos,b1Pos,b2Pos,b3Pos;
     private float an = 0.0f, angle = 0f, lpanelPos = -1.9f, sFactor = 1.4f, sFactorSpeed = 0.001f, newFactor = 0.0f;
     private boolean prsd = false, scroll = false, left = true;
-    private int buttonNo = -1;
+    private int buttonNo = -1, waitCnt = 0;
     private Random random = new Random();
     private boolean correct = random.nextBoolean();
 
@@ -78,8 +81,8 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         // Now test if this ray intersects with the mallet by creating a
         // bounding sphere that wraps the mallet.
         Sphere button0 = new Sphere(new Point(b0Pos.x/2, b0Pos.y+0.25f, b0Pos.z),0.25f);
-        Sphere button1 = new Sphere(new Point(b1Pos.x+0.5f, b1Pos.y, b1Pos.z),0.25f);
-        Sphere button2 = new Sphere(new Point(b2Pos.x/2, b2Pos.y+0.25f, b2Pos.z),0.25f);
+        Sphere button1 = new Sphere(new Point(b1Pos.x+0.5f, b1Pos.y+0.35f, b1Pos.z),0.25f);
+        Sphere button2 = new Sphere(new Point(b2Pos.x/2, b2Pos.y, b2Pos.z),0.25f);
         Sphere button3 = new Sphere(new Point(b3Pos.x+0.5f, b3Pos.y, b3Pos.z),0.25f);
 
         // If the ray intersects (if the user touched a part of the screen that
@@ -131,17 +134,21 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
     @Override
     public void onSurfaceCreated(GL10 gl10, EGLConfig eglConfig) {
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        theTextObj.init();
 
         yellowBackground = new YellowBackground();
         star = new Star();
         heading = new ImageButton();
         bottomBar = new Panel();
         scaleBar = new TimeIndicator();
-        b0Pos = new Point(-0.6f, 0.25f, 0.7f);
-        b1Pos = new Point(-0.18f, 0.25f, 0.7f);
-        b2Pos = new Point(-0.6f, -0.65f, 0.7f);
-        b3Pos = new Point(-0.18f, -0.65f, 0.7f);
+//        b0Pos = new Point(-0.6f, 0.25f, 0.7f);
+//        b1Pos = new Point(-0.18f, 0.25f, 0.7f);
+//        b2Pos = new Point(-0.6f, -0.65f, 0.7f);
+//        b3Pos = new Point(-0.18f, -0.65f, 0.7f);
+
+        b0Pos = new Point(-0.4f, 0.18f, 0.7f);
+        b1Pos = new Point(-0.14f, 0.18f, 0.7f);
+        b2Pos = new Point(-0.4f, -0.38f, 0.7f);
+        b3Pos = new Point(-0.14f, -0.38f, 0.7f);
         for(int i = 0; i< imageButton.length; i++)
             imageButton[i] = new ImageButton();
         darkPanel = new Panel();
@@ -154,17 +161,48 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         buttonTexture = TextureHelper.loadTexture(context, R.drawable.btn_bg);
         wrongButtonTexture = TextureHelper.loadTexture(context, R.drawable.btn_wrong_bg);
         correctButtonTexture = TextureHelper.loadTexture(context, R.drawable.btn_correct_bg);
+        glText = new GLText(context.getAssets());
 
+        // Load the font from file (set size + padding), creates the texture
+        // NOTE: after a successful call to this the font is ready for rendering!
+        glText.load( "Roboto-Regular.ttf", 14, 2, 2 );  // Create Font (Height: 14 Pixels / X+Y Padding 2 Pixels)
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
     }
-
+    private int width = 100;                           // Updated to the Current Width + Height in onSurfaceChanged()
+    private int height = 100;
     @Override
     public void onSurfaceChanged(GL10 gl10, int width, int height) {
         glViewport(0, 0, width, height);
-        MatrixHelper.perspectiveM(projectionMatrix, 45, (float) width/ (float) height, 1f, 10f);
+        Matrix.perspectiveM(projectionMatrix,0, 45, (float) width/ (float) height, 1f, 10f);
         setLookAtM(viewMatrix, 0, 0, 0, -3, 0f, 0f, 0f, 0f, 1.0f, 0.0f);
-        theTextObj.updateCamera(width, height);
+
+        float ratio = (float) width / height;
+//        if (width > height) {
+//            Matrix.frustumM(projectionMatrix, 0, -ratio, ratio, -1, 1, 1, 10);
+//        }
+//        else {
+//            Matrix.frustumM(projectionMatrix, 0, -1, 1, -1/ratio, 1/ratio, 1, 10);
+//        }
+
+        // Save width and height
+        this.width = width;                             // Save Current Width
+        this.height = height;                           // Save Current Height
+
+        int useForOrtho = Math.min(width, height);
+
+        //TODO: Is this wrong?
+//        Matrix.orthoM(viewMatrix, 0,
+//                -useForOrtho/2,
+//                useForOrtho/2,
+//                -useForOrtho/2,
+//                useForOrtho/2, 0.1f, 100f);
+
+//        Matrix.orthoM(projectionMatrix, 0,
+//                -1.0f,
+//                1.0f,
+//                -1.0f,
+//                1.0f, 1f, 100f);
     }
 
     @Override
@@ -199,10 +237,10 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         scaleBar.bindData(colorProgram);
         scaleBar.draw();
 
-        if(an<364.0f) {
+        if(waitCnt<100) {
             positionObjectInScene(b0Pos.x, b0Pos.y, b0Pos.z, buttonNo==0);
             textureProgram.useProgram();
-            if(an>=180 && buttonNo==0) {
+            if(an>=45f && buttonNo==0) {
                 if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
                 else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
             }
@@ -212,7 +250,7 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
 
             positionObjectInScene(b1Pos.x, b1Pos.y, b1Pos.z, buttonNo==1);
             textureProgram.useProgram();
-            if(an>=180 && buttonNo==1) {
+            if(an>=45f && buttonNo==1) {
                 if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
                 else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
             }
@@ -222,7 +260,7 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
 
             positionObjectInScene(b2Pos.x, b2Pos.y, b2Pos.z, buttonNo==2);
             textureProgram.useProgram();
-            if(an>=180 && buttonNo==2) {
+            if(an>=45f && buttonNo==2) {
                 if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
                 else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
             }
@@ -232,7 +270,7 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
 
             positionObjectInScene(b3Pos.x, b3Pos.y, b3Pos.z, buttonNo==3);
             textureProgram.useProgram();
-            if(an>=180 && buttonNo==3) {
+            if(an>=45f && buttonNo==3) {
                 if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
                 else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
             }
@@ -242,7 +280,7 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         }
 
         else{
-            if(angle<360f) {
+            if(angle<360) {
             positionStarInScene();
             textureProgram.useProgram();
             textureProgram.setUniforms(modelViewProjectionMatrix, starTexture);
@@ -266,16 +304,25 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         darkPanel.draw();
 
         glSurfaceView.requestRender();
-//
-//        theTextObj.render();
-//        theTextObj.setText("A high text quality!");
-//        theTextObj.setPosition(1.0f, 4.5f, -1.0f);
-//
-//        if (mustRebuildText) {
-//            theTextObj.update();
-//            mustRebuildText = false;
-//        }
-//        checkGLError("onDrawFrame");
+//        Matrix.perspectiveM(projectionMatrix,0, 45, (float) width/ (float) height, 1f, 10f);
+
+
+//        Matrix.orthoM(viewMatrix, 0,
+//                3.5f,
+//                -3.5f,
+//                -3.5f,
+//                3.5f, 0.1f, 10f);
+        glText.begin( 1.0f, 1.0f, 1.0f, 1.0f, viewProjectionMatrix );         // Begin Text Rendering (Set Color WHITE)
+        glText.drawC("Test String 3D!", 0f, 0f, 0f, 0, -30, 0);
+//		glText.drawC( "Test String :)", 0, 0, 0 );          // Draw Test String
+        glText.draw( "Diagonal 1", 0.004f, 0.0040f, 40);                // Draw Test String
+        glText.draw( "Column 1", 100, 100, 90);              // Draw Test String
+        glText.end();                                   // End Text Rendering
+
+        glText.begin( 0.0f, 0.0f, 1.0f, 1.0f, viewProjectionMatrix );         // Begin Text Rendering (Set Color BLUE)
+        glText.draw( "More Lines...", 50, 200 );        // Draw Test String
+        glText.draw( "The End.", 50, 200 + glText.getCharHeight(), 180);  // Draw Test String
+        glText.end();
     }
 
     private void positionYellowBackgroundInScene() {
@@ -294,20 +341,26 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
 
     private void positionStarInScene() {
         setIdentityM(modelMatrix, 0);
-        angle+=2.5f;
+        angle+=1.9f;
         if(angle>300) scroll = true;
         rotateM(modelMatrix, 0, angle, 1f, 0f, 0f);
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
 
     private void positionObjectInScene(float x, float y, float z, boolean pressedButton) {
+        setIdentityM(rotationMatrix, 0);
+        translateM(rotationMatrix, 0, x, y, z);
         setIdentityM(modelMatrix, 0);
         translateM(modelMatrix, 0, x, y, z);
         scaleM(modelMatrix,0,0.8f, 0.8f, 1.0f);
         if(prsd && pressedButton) {
-            an+=2.4f;
-            rotateM(modelMatrix, 0, an, 0.0f, 1.0f, 0.0f);
+            if (an <= 45f) {
+                an += 1.4f;
+                rotateM(rotationMatrix, 0, an, 0.0f, 1.0f, 0.0f); //rotationMatrix
+            } else waitCnt++;
         }
+        multiplyMM(modelMatrix, 0, rotationMatrix, 0, rotationMatrix, 0);
+        multiplyMM(modelViewProjectionMatrix, 0, modelMatrix, 0, modelMatrix, 0);
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
 
@@ -356,6 +409,7 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         correct = random.nextBoolean();
         prsd = false;
         scroll = false;
+        waitCnt=0;
         lpanelPos = -1.9f;
         left = true;
         an = 0.0f;
@@ -363,14 +417,5 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         sFactor = 1.4f;
         newFactor = 0.0f;
         buttonNo = -1;
-    }
-
-    static public void checkGLError(final String aDesc) {
-        int errorCode = GLES20.GL_NO_ERROR;
-        do {
-            errorCode =  GLES20.glGetError();
-            if (errorCode != GLES20.GL_NO_ERROR)
-                android.util.Log.i("ERROR", "GL error: " + aDesc + " errorCode:" + errorCode);
-        } while (errorCode != GLES20.GL_NO_ERROR);
     }
 }
