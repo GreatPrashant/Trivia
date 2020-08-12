@@ -16,6 +16,7 @@ import static android.opengl.GLES20.GL_LINK_STATUS;
 import static android.opengl.GLES20.GL_VALIDATE_STATUS;
 import static android.opengl.GLES20.GL_VERTEX_SHADER;
 import static android.opengl.GLES20.glAttachShader;
+import static android.opengl.GLES20.glBindAttribLocation;
 import static android.opengl.GLES20.glCompileShader;
 import static android.opengl.GLES20.glCreateProgram;
 import static android.opengl.GLES20.glCreateShader;
@@ -96,7 +97,7 @@ public class ShaderHelper {
 
     /**
      * Links a vertex shader and a fragment shader together into an OpenGL
-     * program. Returns the OpenGL program object ID, or 0 if linking failed.
+     * program. Returns the OpenGL program object ID,glGetAttribLocation or 0 if linking failed.
      */
     public static int linkProgram(int vertexShaderId, int fragmentShaderId) {
 
@@ -116,6 +117,9 @@ public class ShaderHelper {
 
         // Attach the fragment shader to the program.
         glAttachShader(programObjectId, fragmentShaderId);
+
+        glBindAttribLocation(programObjectId, 0, "a_Position");
+        glBindAttribLocation(programObjectId, 1, "v_Color");
 
         // Link the two shaders together into a program.
         glLinkProgram(programObjectId);

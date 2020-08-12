@@ -39,4 +39,8 @@ abstract class ShaderProgram {
         // Set the current OpenGL shader program to this program.
         glUseProgram(program);
     }
+
+    public int getProgram() {
+        return program;
+    }
 }

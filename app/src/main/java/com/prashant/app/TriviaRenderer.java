@@ -3,24 +3,29 @@ package com.prashant.app;
 import android.content.Context;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.opengl.Matrix;
+import android.util.Log;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-import com.prashant.app.objects.Button;
-import com.prashant.app.objects.Heading;
+import com.prashant.app.objects.Panel;
+import com.prashant.app.objects.ImageButton;
 import com.prashant.app.objects.Star;
-import com.prashant.app.objects.Table;
+import com.prashant.app.objects.YellowBackground;
+import com.prashant.app.objects.TimeIndicator;
 import com.prashant.app.programs.ColorShaderProgram;
 import com.prashant.app.programs.TextureShaderProgram;
+import com.prashant.app.text.TextObject;
 import com.prashant.app.util.Geometry;
 import com.prashant.app.util.Geometry.*;
 import com.prashant.app.util.MatrixHelper;
 import com.prashant.app.util.TextureHelper;
 
-import androidx.lifecycle.ViewModel;
+import java.util.Random;
 
 import static android.opengl.GLES20.glClearColor;
+import static android.opengl.GLES20.glUseProgram;
 import static android.opengl.GLES20.glViewport;
 import static android.opengl.Matrix.invertM;
 import static android.opengl.Matrix.multiplyMM;
@@ -35,24 +40,31 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
     private final Context context;
 
     private final float[] projectionMatrix = new float[16];
-    private final float[] modelMatrix = new float[16];
+    private float[] modelMatrix = new float[16];
     private final float[] viewMatrix = new float[16];
     private final float[] viewProjectionMatrix = new float[16];
     private final float[] invertedViewProjectionMatrix = new float[16];
     private final float[] modelViewProjectionMatrix = new float[16];
+    private final float[] rotationMatrix = new float[16];
 
     private TextureShaderProgram textureProgram;
     private ColorShaderProgram colorProgram;
-    private Table table;
+    private YellowBackground yellowBackground;
     private Star star;
-    private Heading heading, bottomBar;
-    private Button[] button = new Button[4];
-    private Button darkPanel, lightPanel;
-    private int texture, starTexture, headingTexture;
+    private ImageButton heading;
+    private ImageButton[] imageButton = new ImageButton[4];
+    private Panel darkPanel, lightPanel, bottomBar;
+    private TimeIndicator scaleBar;
+    private TextObject theTextObj = new TextObject();;
+    private boolean mustRebuildText = true;
+    private int yBgTexture, starTexture, headingTexture, buttonTexture, wrongButtonTexture, correctButtonTexture;
     private GLSurfaceView glSurfaceView;
-    private Point buttonPosition;
-    private float an = 0.0f, angle = 0f, lpanelPos = -1.9f;
+    private Point b0Pos,b1Pos,b2Pos,b3Pos;
+    private float an = 0.0f, angle = 0f, lpanelPos = -1.9f, sFactor = 1.4f, sFactorSpeed = 0.001f, newFactor = 0.0f;
     private boolean prsd = false, scroll = false, left = true;
+    private int buttonNo = -1;
+    private Random random = new Random();
+    private boolean correct = random.nextBoolean();
 
     public TriviaRenderer(Context context, GLSurfaceView glSurfaceView) {
         this.context = context;
@@ -65,13 +77,21 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
 
         // Now test if this ray intersects with the mallet by creating a
         // bounding sphere that wraps the mallet.
-        Sphere malletBoundingSphere = new Sphere(new Point(buttonPosition.x/2, buttonPosition.y, buttonPosition.z),0.25f);
+        Sphere button0 = new Sphere(new Point(b0Pos.x/2, b0Pos.y+0.25f, b0Pos.z),0.25f);
+        Sphere button1 = new Sphere(new Point(b1Pos.x+0.5f, b1Pos.y, b1Pos.z),0.25f);
+        Sphere button2 = new Sphere(new Point(b2Pos.x/2, b2Pos.y+0.25f, b2Pos.z),0.25f);
+        Sphere button3 = new Sphere(new Point(b3Pos.x+0.5f, b3Pos.y, b3Pos.z),0.25f);
 
         // If the ray intersects (if the user touched a part of the screen that
         // intersects the mallet's bounding sphere), then set malletPressed =
         // true.
-        if(!prsd)
-            prsd = Geometry.intersects(malletBoundingSphere, ray);
+        if(!prsd) {
+            if(Geometry.intersects(button0, ray)) { prsd = true; buttonNo=0; return; }
+            if(Geometry.intersects(button1, ray)) { prsd = true; buttonNo=1; return; }
+            if(Geometry.intersects(button2, ray)) { prsd = true; buttonNo=2; return; }
+            if(Geometry.intersects(button3, ray)) { prsd = true; buttonNo=3; }
+            else prsd = false;
+        }
     }
     private Ray convertNormalized2DPointToRay(
             float normalizedX, float normalizedY) {
@@ -111,20 +131,32 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
     @Override
     public void onSurfaceCreated(GL10 gl10, EGLConfig eglConfig) {
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        table = new Table();
+        theTextObj.init();
+
+        yellowBackground = new YellowBackground();
         star = new Star();
-        heading = new Heading();
-        bottomBar = new Heading();
-        buttonPosition = new Point(-0.85f, 0.3f, 0.7f);
-        for(int i=0; i<button.length; i++)
-            button[i] = new Button();
-        darkPanel = new Button();
-        lightPanel = new Button();
+        heading = new ImageButton();
+        bottomBar = new Panel();
+        scaleBar = new TimeIndicator();
+        b0Pos = new Point(-0.6f, 0.25f, 0.7f);
+        b1Pos = new Point(-0.18f, 0.25f, 0.7f);
+        b2Pos = new Point(-0.6f, -0.65f, 0.7f);
+        b3Pos = new Point(-0.18f, -0.65f, 0.7f);
+        for(int i = 0; i< imageButton.length; i++)
+            imageButton[i] = new ImageButton();
+        darkPanel = new Panel();
+        lightPanel = new Panel();
         textureProgram = new TextureShaderProgram(context);
         colorProgram = new ColorShaderProgram(context);
-        texture = TextureHelper.loadTexture(context, R.drawable.trivia_bg);
+        yBgTexture = TextureHelper.loadTexture(context, R.drawable.trivia_bg);
         starTexture = TextureHelper.loadTexture(context, R.drawable.star);
         headingTexture = TextureHelper.loadTexture(context, R.drawable.heading);
+        buttonTexture = TextureHelper.loadTexture(context, R.drawable.btn_bg);
+        wrongButtonTexture = TextureHelper.loadTexture(context, R.drawable.btn_wrong_bg);
+        correctButtonTexture = TextureHelper.loadTexture(context, R.drawable.btn_correct_bg);
+
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
     }
 
     @Override
@@ -132,57 +164,81 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         glViewport(0, 0, width, height);
         MatrixHelper.perspectiveM(projectionMatrix, 45, (float) width/ (float) height, 1f, 10f);
         setLookAtM(viewMatrix, 0, 0, 0, -3, 0f, 0f, 0f, 0f, 1.0f, 0.0f);
+        theTextObj.updateCamera(width, height);
     }
 
     @Override
     public void onDrawFrame(GL10 gl10) {
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        // Update the viewProjection matrix, and create an inverted matrix for
+        // touch picking.
         multiplyMM(viewProjectionMatrix, 0, projectionMatrix, 0, viewMatrix, 0);
         invertM(invertedViewProjectionMatrix, 0, viewProjectionMatrix, 0);
 
-        positionTableInScene();
+        positionYellowBackgroundInScene();
         textureProgram.useProgram();
-        textureProgram.setUniforms(modelViewProjectionMatrix, texture);
-        table.bindData(textureProgram);
-        table.draw();
+        textureProgram.setUniforms(modelViewProjectionMatrix, yBgTexture);
+        yellowBackground.bindData(textureProgram);
+        yellowBackground.draw();
 
-        positionHeadingInScene(-1.4f, -0.3f, 0.7f, false);
+        positionHeadingInScene(-1.85f, -0.25f, 0.7f);
         textureProgram.useProgram();
         textureProgram.setUniforms(modelViewProjectionMatrix, headingTexture);
         heading.bindData(textureProgram);
         heading.draw();
 
-        positionHeadingInScene(0.4f, -0.3f, 0.7f, true);
-
-        textureProgram.useProgram();
-        textureProgram.setUniforms(modelViewProjectionMatrix, headingTexture);
-        bottomBar.bindData(textureProgram);
+        positionBottomObjectInScene(0.4f, -0.3f, 0.7f, false);
+        colorProgram.useProgram();
+        colorProgram.setUniforms(modelViewProjectionMatrix, 0.0f,0.0f,0.0f);
+        bottomBar.bindData(colorProgram);
         bottomBar.draw();
 
+        positionBottomObjectInScene(0.4f, -0.3f, 0.7f, true);
+        colorProgram.useProgram();
+        colorProgram.setUniforms(modelViewProjectionMatrix, 0.0f,0.0f,1.0f);
+        scaleBar.bindData(colorProgram);
+        scaleBar.draw();
+
         if(an<364.0f) {
-            positionObjectInScene(buttonPosition.x, buttonPosition.y, buttonPosition.z);
-            colorProgram.useProgram();
-            colorProgram.setUniforms(modelViewProjectionMatrix, 0.7f, 0.7f, 0.7f);
-            button[0].bindData(colorProgram);
-            button[0].draw();
+            positionObjectInScene(b0Pos.x, b0Pos.y, b0Pos.z, buttonNo==0);
+            textureProgram.useProgram();
+            if(an>=180 && buttonNo==0) {
+                if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
+                else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
+            }
+            else  textureProgram.setUniforms(modelViewProjectionMatrix, buttonTexture);
+            imageButton[0].bindData(textureProgram);
+            imageButton[0].draw();
 
-            positionObjectInScene(-0.3f, 0.3f, 0.7f);
-            colorProgram.useProgram();
-            colorProgram.setUniforms(modelViewProjectionMatrix, 0.7f, 0.7f, 0.7f);
-            button[1].bindData(colorProgram);
-            button[1].draw();
+            positionObjectInScene(b1Pos.x, b1Pos.y, b1Pos.z, buttonNo==1);
+            textureProgram.useProgram();
+            if(an>=180 && buttonNo==1) {
+                if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
+                else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
+            }
+            else textureProgram.setUniforms(modelViewProjectionMatrix, buttonTexture);
+            imageButton[1].bindData(textureProgram);
+            imageButton[1].draw();
 
-            positionObjectInScene(-0.85f, -0.85f, 0.7f);
-            colorProgram.useProgram();
-            colorProgram.setUniforms(modelViewProjectionMatrix, 0.7f, 0.7f, 0.7f);
-            button[2].bindData(colorProgram);
-            button[2].draw();
+            positionObjectInScene(b2Pos.x, b2Pos.y, b2Pos.z, buttonNo==2);
+            textureProgram.useProgram();
+            if(an>=180 && buttonNo==2) {
+                if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
+                else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
+            }
+            else textureProgram.setUniforms(modelViewProjectionMatrix, buttonTexture);
+            imageButton[2].bindData(textureProgram);
+            imageButton[2].draw();
 
-            positionObjectInScene(-0.3f, -0.85f, 0.7f);
-            colorProgram.useProgram();
-            colorProgram.setUniforms(modelViewProjectionMatrix, 0.7f, 0.7f, 0.7f);
-            button[3].bindData(colorProgram);
-            button[3].draw();
+            positionObjectInScene(b3Pos.x, b3Pos.y, b3Pos.z, buttonNo==3);
+            textureProgram.useProgram();
+            if(an>=180 && buttonNo==3) {
+                if (correct) textureProgram.setUniforms(modelViewProjectionMatrix, correctButtonTexture);
+                else textureProgram.setUniforms(modelViewProjectionMatrix, wrongButtonTexture);
+            }
+            else textureProgram.setUniforms(modelViewProjectionMatrix, buttonTexture);
+            imageButton[3].bindData(textureProgram);
+            imageButton[3].draw();
         }
 
         else{
@@ -210,23 +266,29 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         darkPanel.draw();
 
         glSurfaceView.requestRender();
+//
+//        theTextObj.render();
+//        theTextObj.setText("A high text quality!");
+//        theTextObj.setPosition(1.0f, 4.5f, -1.0f);
+//
+//        if (mustRebuildText) {
+//            theTextObj.update();
+//            mustRebuildText = false;
+//        }
+//        checkGLError("onDrawFrame");
     }
 
-
-    private void positionTableInScene() {
-        // The table is defined in terms of X & Y coordinates, so we rotate it
-        // 90 degrees to lie flat on the XZ plane.
+    private void positionYellowBackgroundInScene() {
         setIdentityM(modelMatrix, 0);
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
 
-    private void positionHeadingInScene(float x, float y, float z, boolean bottom) {
-        // The table is defined in terms of X & Y coordinates, so we rotate it
+    private void positionHeadingInScene(float x, float y, float z) {
+        // The yellowBackground is defined in terms of X & Y coordinates, so we rotate it
         // 90 degrees to lie flat on the XZ plane.
         setIdentityM(modelMatrix, 0);
+        scaleM(modelMatrix, 0, 0.6f, 1.3f, 1.0f);
         translateM(modelMatrix, 0, x, y, z);
-        if(bottom)
-            scaleM(modelMatrix,0, 1.0f, 1.4f, 1.0f);
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
 
@@ -238,12 +300,32 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
 
-    private void positionObjectInScene(float x, float y, float z) {
+    private void positionObjectInScene(float x, float y, float z, boolean pressedButton) {
         setIdentityM(modelMatrix, 0);
         translateM(modelMatrix, 0, x, y, z);
-        if(prsd) {
-            an+=0.4f;
-            rotateM(modelMatrix, 0,  an, 0.0f, 1.0f, 0.0f);
+        scaleM(modelMatrix,0,0.8f, 0.8f, 1.0f);
+        if(prsd && pressedButton) {
+            an+=2.4f;
+            rotateM(modelMatrix, 0, an, 0.0f, 1.0f, 0.0f);
+        }
+        multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
+    }
+
+    private void positionBottomObjectInScene(float x, float y, float z, boolean sBar) {
+        setIdentityM(modelMatrix, 0);
+
+        if(sBar) {
+            sFactor -= sFactorSpeed;
+            newFactor += sFactorSpeed;
+            if(sFactor<0.0f) sFactor = 0.0f;
+            //Log.d("000000000",""+(y+(1.4f)-sFactor));
+            translateM(modelMatrix, 0, x, (y+(1.4f)-sFactor)-newFactor/5, z);
+//            translateM(modelMatrix, 0, x, y-sFactor+0.004f, z);
+            scaleM(modelMatrix, 0, 1.0f, sFactor, 1.0f);
+        }
+        else {
+            translateM(modelMatrix, 0, x, y, z);
+            scaleM(modelMatrix, 0, 1.0f, 1.4f, 1.0f);
         }
         multiplyMM(modelViewProjectionMatrix, 0, viewProjectionMatrix,0, modelMatrix, 0);
     }
@@ -271,11 +353,24 @@ public class TriviaRenderer implements GLSurfaceView.Renderer {
     }
 
     private void resetAll() {
+        correct = random.nextBoolean();
         prsd = false;
         scroll = false;
         lpanelPos = -1.9f;
         left = true;
         an = 0.0f;
         angle = 0.0f;
+        sFactor = 1.4f;
+        newFactor = 0.0f;
+        buttonNo = -1;
+    }
+
+    static public void checkGLError(final String aDesc) {
+        int errorCode = GLES20.GL_NO_ERROR;
+        do {
+            errorCode =  GLES20.glGetError();
+            if (errorCode != GLES20.GL_NO_ERROR)
+                android.util.Log.i("ERROR", "GL error: " + aDesc + " errorCode:" + errorCode);
+        } while (errorCode != GLES20.GL_NO_ERROR);
     }
 }
